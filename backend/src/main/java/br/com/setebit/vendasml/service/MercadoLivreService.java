@@ -1,7 +1,9 @@
 package br.com.setebit.vendasml.service;
 
 import br.com.setebit.vendasml.client.MercadoLivreAuthClient;
+import br.com.setebit.vendasml.client.MercadoLivreCategoryClient;
 import br.com.setebit.vendasml.client.MercadoLivreItemClient;
+import br.com.setebit.vendasml.dto.CategoryResponse;
 import br.com.setebit.vendasml.dto.ItemRequest;
 import br.com.setebit.vendasml.dto.ItemResponse;
 import br.com.setebit.vendasml.dto.TokenResponse;
@@ -18,6 +20,7 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -26,6 +29,7 @@ public class MercadoLivreService {
     
     private final MercadoLivreAuthClient authClient;
     private final MercadoLivreItemClient itemClient;
+    private final MercadoLivreCategoryClient categoryClient;
     private final TokenRepository tokenRepository;
     
     @Value("${mercadolivre.client-id}")
@@ -186,6 +190,42 @@ public class MercadoLivreService {
             clientId,
             redirectUri
         );
+    }
+    
+    /**
+     * Lista todas as categorias principais de um site
+     * @param siteId ID do site (ex: MLB para Brasil, MLA para Argentina)
+     * @return Lista de categorias principais
+     */
+    public List<CategoryResponse> getCategories(String siteId) {
+        log.info("Listando categorias do site: {}", siteId);
+        try {
+            return categoryClient.getCategories(siteId);
+        } catch (Exception e) {
+            log.error("Erro ao listar categorias: {}", e.getMessage(), e);
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Erro ao listar categorias: " + e.getMessage()
+            );
+        }
+    }
+    
+    /**
+     * Obtém detalhes de uma categoria específica, incluindo subcategorias
+     * @param categoryId ID da categoria (ex: MLB5672)
+     * @return Detalhes da categoria com subcategorias
+     */
+    public CategoryResponse getCategory(String categoryId) {
+        log.info("Buscando categoria: {}", categoryId);
+        try {
+            return categoryClient.getCategory(categoryId);
+        } catch (Exception e) {
+            log.error("Erro ao buscar categoria: {}", e.getMessage(), e);
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Erro ao buscar categoria: " + e.getMessage()
+            );
+        }
     }
 }
 

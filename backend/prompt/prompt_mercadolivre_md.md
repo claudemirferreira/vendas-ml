@@ -48,6 +48,11 @@
     </dependency>
     
     <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+    
+    <dependency>
         <groupId>org.flywaydb</groupId>
         <artifactId>flyway-core</artifactId>
     </dependency>
@@ -180,7 +185,13 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
 
 springdoc:
   api-docs:
@@ -1457,7 +1468,7 @@ class MercadoLivreServiceTest {
 }
 ```
 
-## 1️⃣3️⃣ Docker Compose para MySQL
+## 1️⃣3️⃣ Docker Compose com MySQL, Prometheus e Grafana
 
 ### docker-compose.yml
 ```yaml
@@ -1488,8 +1499,51 @@ services:
     networks:
       - mercadolivre-network
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mercadolivre-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - mercadolivre-network
+    depends_on:
+      - mysql
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mercadolivre-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - mercadolivre-network
+    depends_on:
+      - prometheus
+
 volumes:
   mysql_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:
@@ -1504,20 +1558,105 @@ SET character_set_connection = utf8mb4;
 SET character_set_results = utf8mb4;
 ```
 
+### Configuração do Prometheus
+
+**prometheus/prometheus.yml**
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'mercadolivre-monitor'
+
+scrape_configs:
+  # Métricas da aplicação Spring Boot
+  - job_name: 'vendasml'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          application: 'vendasml'
+          environment: 'development'
+
+  # Métricas do Prometheus
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+```
+
+> **Nota:** `host.docker.internal:8080` permite que o Prometheus (rodando no Docker) acesse a aplicação Spring Boot rodando na máquina host. Se a aplicação também estiver em Docker, use `vendasml-app:8080` ou o nome do serviço.
+
+### Configuração do Grafana
+
+**grafana/provisioning/datasources/prometheus.yml**
+```yaml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+```
+
+**grafana/provisioning/dashboards/dashboard.yml**
+```yaml
+apiVersion: 1
+
+providers:
+  - name: 'Default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
+```
+
 ### Comandos Docker
 ```bash
-# Iniciar MySQL
+# Iniciar todos os serviços (MySQL, Prometheus, Grafana)
 docker-compose up -d
 
-# Ver logs
+# Ver logs de um serviço específico
+docker-compose logs -f prometheus
+docker-compose logs -f grafana
 docker-compose logs -f mysql
 
-# Parar MySQL
+# Parar todos os serviços
 docker-compose down
 
-# Parar e remover volumes
+# Parar e remover volumes (apaga dados)
 docker-compose down -v
+
+# Reiniciar apenas o Prometheus após mudanças na configuração
+docker-compose restart prometheus
 ```
+
+### Acessar as Ferramentas
+
+Após iniciar os serviços:
+
+- **Grafana**: http://localhost:3000
+  - Usuário: `admin`
+  - Senha: `admin`
+  - Dashboard Spring Boot será carregado automaticamente
+
+- **Prometheus**: http://localhost:9090
+  - UI nativa do Prometheus
+  - Execute queries PromQL
+  - Verifique targets em Status → Targets
+
+- **Métricas da Aplicação**: http://localhost:8080/actuator/prometheus
+  - Endpoint exposto pela aplicação Spring Boot
+  - Formato Prometheus (text/plain)
 
 ## 1️⃣4️⃣ Considerações Finais
 
@@ -1542,6 +1681,10 @@ docker-compose down -v
 ### Monitoramento:
 - Use Spring Actuator para health checks.
 - Monitore expiração de tokens e falhas de refresh.
+- **Prometheus**: Coleta métricas da aplicação via endpoint `/actuator/prometheus`
+- **Grafana**: Visualização de métricas em dashboards pré-configurados
+- Métricas disponíveis: HTTP requests, JVM memory, database connections, thread pools
+- Configure alertas no Prometheus/Grafana para monitoramento proativo
 
 ### Migrações Flyway:
 - ⚠️ **Importante:** As migrações são executadas automaticamente na inicialização
@@ -1571,5 +1714,6 @@ docker-compose down -v
 - Scheduler para refresh proativo de tokens
 - Webhook para receber notificações do Mercado Livre
 - Retry automático com circuit breaker (Resilience4j)
-- Métricas com Micrometer
+- Alertas customizados no Prometheus/Grafana
+- Métricas customizadas de negócio (ex: tokens refresh, produtos criados)
 - Migrações de dados com Flyway (usando prefixo `R__` para scripts repeatable)

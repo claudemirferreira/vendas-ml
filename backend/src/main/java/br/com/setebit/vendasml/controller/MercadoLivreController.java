@@ -24,6 +24,19 @@ import org.springframework.web.bind.annotation.*;
 public class MercadoLivreController {
     
     private final MercadoLivreService mercadoLivreService;
+
+    @Operation(
+            summary = "Obter URL de autorização",
+            description = "Retorna a URL para redirecionar o usuário para autorização OAuth do Mercado Livre"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "URL de autorização gerada com sucesso")
+    })
+    @GetMapping("/grafana")
+    public ResponseEntity<String> grafana() {
+        log.info("chamou grafana");
+        return ResponseEntity.ok("ok");
+    }
     
     @Operation(
         summary = "Obter URL de autorização",
